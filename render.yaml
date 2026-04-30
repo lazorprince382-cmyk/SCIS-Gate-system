@@ -47,4 +47,4 @@ services:
 
 databases:
   - name: scis-gate-system-db
-    plan: starter
+    plan: basic
