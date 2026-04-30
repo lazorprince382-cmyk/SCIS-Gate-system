@@ -1,0 +1,29 @@
+{
+  "name": "scis-gate-system-backend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "migrate:up": "node-pg-migrate up -m migrations",
+    "migrate:down": "node-pg-migrate down -m migrations",
+    "backup:db": "node scripts/backup-db.mjs",
+    "restore:db": "node scripts/restore-db.mjs",
+    "admin:reset-password": "node scripts/reset-admin-password.mjs",
+    "dev": "npm run migrate:up && node server.js"
+  },
+  "dependencies": {
+    "@sentry/node": "^10.17.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "express-rate-limit": "^8.4.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "node-pg-migrate": "^8.0.3",
+    "pg": "^8.20.0",
+    "pino": "^10.0.0",
+    "pino-http": "^11.0.0",
+    "ws": "^8.18.3"
+  }
+}

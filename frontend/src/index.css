@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+  body {
+    @apply m-0 text-school-blue font-sans antialiased;
+    background: linear-gradient(135deg, #b9ebff 0%, #d8f5ff 45%, #bfefff 100%);
+    background-attachment: fixed;
+  }
+  #root {
+    @apply min-h-screen;
+  }
+}
