@@ -81,6 +81,36 @@ const failedReportLimiter = rateLimit({
 });
 
 const scanSessions = new Map();
+const scanSessionsByPair = new Map();
+const SCAN_SESSION_TTL_MS = 15 * 60 * 1000;
+
+function removeScanSession(sessionId) {
+  const s = scanSessions.get(sessionId);
+  if (s?.pair_code) scanSessionsByPair.delete(String(s.pair_code));
+  scanSessions.delete(sessionId);
+}
+
+function isSessionExpired(s) {
+  return s.expires_at && Date.now() > new Date(s.expires_at).getTime();
+}
+
+function getSessionIfFresh(sessionId) {
+  const s = scanSessions.get(sessionId);
+  if (!s) return null;
+  if (isSessionExpired(s)) {
+    removeScanSession(sessionId);
+    return null;
+  }
+  return s;
+}
+
+function allocPairCode() {
+  for (let i = 0; i < 40; i++) {
+    const code = String(crypto.randomInt(100000, 1000000));
+    if (!scanSessionsByPair.has(code)) return code;
+  }
+  throw new Error('Could not allocate pair code');
+}
 
 app.get('/health', async (_req, res) => {
   try {
@@ -622,29 +652,48 @@ app.get('/api/visits', async (req, res) => {
 });
 
 app.post('/api/scan-sessions', (req, res) => {
-  const { mode } = req.body || {};
-  const sessionId = crypto.randomUUID();
-  const session = {
-    id: sessionId,
-    mode: mode === 'scanOut' ? 'scanOut' : 'register',
-    status: 'waiting',
-    barcode: null,
-    error: null,
-    created_at: nowIso(),
-    updated_at: nowIso(),
-  };
-  scanSessions.set(sessionId, session);
-  res.status(201).json(session);
+  try {
+    const { mode } = req.body || {};
+    const sessionId = crypto.randomUUID();
+    const pair_code = allocPairCode();
+    const expires_at = new Date(Date.now() + SCAN_SESSION_TTL_MS).toISOString();
+    const session = {
+      id: sessionId,
+      pair_code,
+      expires_at,
+      mode: mode === 'scanOut' ? 'scanOut' : 'register',
+      status: 'waiting',
+      barcode: null,
+      error: null,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    scanSessions.set(sessionId, session);
+    scanSessionsByPair.set(pair_code, sessionId);
+    res.status(201).json(session);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create scan session' });
+  }
+});
+
+app.get('/api/scan-sessions/by-pair/:code', (req, res) => {
+  const raw = String(req.params.code || '').replace(/\D/g, '');
+  if (raw.length !== 6) return res.status(400).json({ error: 'Pair code must be 6 digits' });
+  const sessionId = scanSessionsByPair.get(raw);
+  if (!sessionId) return res.status(404).json({ error: 'Scan session not found' });
+  const session = getSessionIfFresh(sessionId);
+  if (!session) return res.status(404).json({ error: 'Scan session not found' });
+  res.json(session);
 });
 
 app.get('/api/scan-sessions/:id', (req, res) => {
-  const session = scanSessions.get(req.params.id);
+  const session = getSessionIfFresh(req.params.id);
   if (!session) return res.status(404).json({ error: 'Scan session not found' });
   res.json(session);
 });
 
 app.post('/api/scan-sessions/:id/scan', async (req, res) => {
-  const session = scanSessions.get(req.params.id);
+  const session = getSessionIfFresh(req.params.id);
   if (!session) return res.status(404).json({ error: 'Scan session not found' });
   const barcode = String(req.body?.barcode || '').trim();
   if (!barcode) return res.status(400).json({ error: 'Barcode is required' });

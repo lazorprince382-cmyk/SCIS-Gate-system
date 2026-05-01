@@ -1,9 +1,70 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import QRCode from 'qrcode';
 import { BarcodeInput } from '../components/BarcodeInput';
 import Navbar from '../components/Navbar';
 import { api } from '../api';
 
 const PURPOSE_PRESET_CUSTOM = '__custom__';
+
+function PhoneScanSessionBox({ phoneSession }) {
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  useEffect(() => {
+    if (!phoneSession?.id) {
+      setQrDataUrl('');
+      return undefined;
+    }
+    const url = `${window.location.origin}/phone-scan/${phoneSession.id}`;
+    let cancelled = false;
+    QRCode.toDataURL(url, { width: 220, margin: 2, errorCorrectionLevel: 'M' })
+      .then((dataUrl) => {
+        if (!cancelled) setQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setQrDataUrl('');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [phoneSession?.id]);
+
+  const showLocalhostHint = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const pairCode = phoneSession?.pair_code || '------';
+
+  return (
+    <div className="p-3 rounded-lg border border-school-blue-light/40 bg-school-surface text-sm text-school-blue">
+      <p className="m-0 font-medium">Scan this code with your phone camera — opens the scanner in one tap.</p>
+      {qrDataUrl ? (
+        <div className="mt-3 flex justify-center">
+          <img
+            src={qrDataUrl}
+            alt="QR code — scan to open phone barcode scanner"
+            className="w-44 h-44 rounded-lg border border-school-blue-light/30 bg-school-white"
+          />
+        </div>
+      ) : (
+        <p className="m-0 mt-2 text-school-blue-light">Generating QR…</p>
+      )}
+      <p className="m-0 mt-3">
+        Or open{' '}
+        <span className="font-mono font-semibold">{`${window.location.origin}/phone-scan`}</span>
+        {' '}
+        and enter code:
+      </p>
+      <p className="m-0 mt-1 text-center text-2xl font-mono font-bold tracking-[0.35em] text-school-blue">
+        {pairCode}
+      </p>
+      <p className="m-0 mt-3 text-school-blue-light text-xs">Direct link (fallback):</p>
+      <p className="m-0 mt-1 font-mono break-all text-xs">
+        {`${window.location.origin}/phone-scan/${phoneSession.id}`}
+      </p>
+      {showLocalhostHint ? (
+        <p className="m-0 mt-2 text-school-blue-light text-xs">
+          If the phone is on the same Wi‑Fi, replace localhost in the link with this computer&apos;s LAN IP.
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 const emptyRegisterForm = () => ({
   visitor_name: '',
@@ -264,15 +325,7 @@ export default function GateKiosk() {
             >
               Use phone camera as scanner
             </button>
-            {phoneSession?.mode === 'register' && (
-              <div className="p-3 rounded-lg border border-school-blue-light/40 bg-school-surface text-sm text-school-blue">
-                <p className="m-0">On your phone open:</p>
-                <p className="m-0 mt-1 font-mono break-all">
-                  {`${window.location.origin}/phone-scan/${phoneSession.id}`}
-                </p>
-                <p className="m-0 mt-1 text-school-blue-light">If using a different device, replace localhost with this computer IP.</p>
-              </div>
-            )}
+            {phoneSession?.mode === 'register' && <PhoneScanSessionBox phoneSession={phoneSession} />}
             {cardLookup && (
               <p className="m-0 p-3 bg-school-surface rounded-lg border-l-4 border-school-red text-school-blue text-sm">
                 Card: {cardLookup.card.card_id} {cardLookup.currentVisit && '(in use – use Scan out)'}
@@ -404,15 +457,7 @@ export default function GateKiosk() {
             >
               Use phone camera as scanner
             </button>
-            {phoneSession?.mode === 'scanOut' && (
-              <div className="p-3 rounded-lg border border-school-blue-light/40 bg-school-surface text-sm text-school-blue">
-                <p className="m-0">On your phone open:</p>
-                <p className="m-0 mt-1 font-mono break-all">
-                  {`${window.location.origin}/phone-scan/${phoneSession.id}`}
-                </p>
-                <p className="m-0 mt-1 text-school-blue-light">If using a different device, replace localhost with this computer IP.</p>
-              </div>
-            )}
+            {phoneSession?.mode === 'scanOut' && <PhoneScanSessionBox phoneSession={phoneSession} />}
             {scanOutCard && <p className="text-school-blue-light text-sm mt-1">Processing card: {scanOutCard}</p>}
             <button
               type="button"

@@ -44,6 +44,7 @@ export default function App() {
         <Route path="/" element={<GateKiosk />} />
         <Route path="/gate" element={<GateKiosk />} />
         <Route path="/office" element={<OfficeDashboard />} />
+        <Route path="/phone-scan" element={<PhoneScanPage />} />
         <Route path="/phone-scan/:sessionId" element={<PhoneScanPage />} />
         <Route path="/login" element={user ? <Navigate to="/admin" replace /> : <Login onLogin={setUser} />} />
         <Route path="/admin" element={<RequireAuth><AdminLayout /></RequireAuth>}>
