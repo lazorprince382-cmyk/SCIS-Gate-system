@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { BarcodeInput } from '../components/BarcodeInput';
 import Navbar from '../components/Navbar';
+import { SCHOOL_BADGE_URL } from '../theme';
 import { api } from '../api';
 import { absoluteAppUrl, appPath } from '../appPath';
 
@@ -267,7 +268,7 @@ export default function GateKiosk() {
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
             <div className="flex justify-center lg:justify-start">
               <img
-                src="/school-badge.png"
+                src={SCHOOL_BADGE_URL}
                 alt="Shalom Cambridge International School badge"
                 className="w-[260px] h-[260px] sm:w-[360px] sm:h-[360px] object-contain drop-shadow-md"
               />
