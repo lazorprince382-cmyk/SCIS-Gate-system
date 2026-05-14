@@ -21,6 +21,18 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   exit 1
 fi
 
+DB_NAME="${DB_NAME:-${DATABASE_URL##*/}}"
+DB_NAME="${DB_NAME%%\?*}"
+DB_USER="${DB_USER:-gate_user}"
+
+psql_admin() {
+  if command -v sudo >/dev/null 2>&1 && id postgres >/dev/null 2>&1; then
+    sudo -u postgres psql -d "$DB_NAME" -v ON_ERROR_STOP=1 "$@"
+  else
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 "$@"
+  fi
+}
+
 # Render external Postgres requires TLS.
 if [[ "$RENDER_DATABASE_URL" != *"sslmode="* ]]; then
   if [[ "$RENDER_DATABASE_URL" == *\?* ]]; then
@@ -95,11 +107,28 @@ echo "Saved: $BACKUP ($(wc -c < "$BACKUP") bytes)"
 echo "Stopping gate API..."
 pm2 stop scis-gate || true
 
-echo "Replacing VPS database contents..."
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO gate_user;"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO gate_user;"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --file="$BACKUP"
+restore_failed=1
+cleanup() {
+  if [[ "$restore_failed" == 1 ]]; then
+    echo "Migration did not finish — restarting API..."
+  fi
+  pm2 restart scis-gate --update-env || true
+  pm2 save || true
+}
+trap cleanup EXIT
+
+echo "Replacing VPS database contents (as postgres superuser)..."
+psql_admin -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+psql_admin -c "ALTER SCHEMA public OWNER TO ${DB_USER};"
+psql_admin -c "GRANT ALL ON SCHEMA public TO ${DB_USER};"
+psql_admin --file="$BACKUP"
+psql_admin -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER};"
+psql_admin -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};"
+psql_admin -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};"
+psql_admin -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};"
+
+trap - EXIT
+restore_failed=0
 
 echo "Starting gate API..."
 pm2 restart scis-gate --update-env
