@@ -67,8 +67,6 @@ export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [cameraHint, setCameraHint] = useState('');
-  const [cameraReady, setCameraReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -80,19 +78,10 @@ export default function Login({ onLogin }) {
       streamRef.current = null;
     }
     if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraReady(false);
   }, []);
 
   const startCamera = useCallback(async () => {
-    if (!canUseCamera()) {
-      setCameraHint(
-        window.isSecureContext
-          ? 'Camera is not available in this browser. Failed sign-ins will still be logged without a photo.'
-          : 'Camera snapshots need HTTPS. Open the site with https:// (not http://) so the browser can use the camera.',
-      );
-      return false;
-    }
-    if (streamRef.current?.active) return true;
+    if (!canUseCamera() || streamRef.current?.active) return streamRef.current?.active;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -103,16 +92,8 @@ export default function Login({ onLogin }) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play().catch(() => {});
       }
-      const ready = await waitForFrame(videoRef.current, 3000);
-      setCameraReady(ready);
-      if (ready) {
-        setCameraHint('');
-      } else {
-        setCameraHint('Camera started but no picture yet. Allow camera access if prompted.');
-      }
-      return ready;
+      return waitForFrame(videoRef.current, 3000);
     } catch {
-      setCameraHint('Camera blocked. Allow camera access in the browser to capture photos on failed sign-in.');
       return false;
     }
   }, []);
@@ -121,14 +102,7 @@ export default function Login({ onLogin }) {
     if (!streamRef.current?.active) startCamera();
   }, [startCamera]);
 
-  useEffect(() => {
-    if (!canUseCamera()) {
-      setCameraHint(
-        'Camera snapshots need HTTPS. Failed sign-ins are still recorded, but without a photo on this address.',
-      );
-    }
-    return () => stopCamera();
-  }, [stopCamera]);
+  useEffect(() => () => stopCamera(), [stopCamera]);
 
   const reportFailedAttempt = async (attemptedUsername) => {
     if (!streamRef.current?.active) {
@@ -160,7 +134,6 @@ export default function Login({ onLogin }) {
     const u = username;
     const p = password;
 
-    // Start camera while the Sign in click still counts as a user gesture.
     await startCamera();
 
     try {
@@ -199,14 +172,7 @@ export default function Login({ onLogin }) {
           Admin sign in
           <span className="block mx-auto mt-2 h-1 w-16 rounded-full bg-school-red" />
         </h2>
-        {cameraHint ? (
-          <p className="text-school-blue-light text-xs mt-3 mb-0 p-2 rounded-lg bg-school-white/80 border border-school-blue-light/30">
-            {cameraHint}
-          </p>
-        ) : cameraReady ? (
-          <p className="text-green-700 text-xs mt-3 mb-0">Camera ready for security snapshots.</p>
-        ) : null}
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4 mt-4">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <label className="text-school-blue font-medium">
             Username
             <input
