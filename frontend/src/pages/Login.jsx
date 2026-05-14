@@ -20,6 +20,15 @@ async function postFailedLoginReport(payload) {
   return res.json();
 }
 
+function canUseCamera() {
+  return (
+    typeof window !== 'undefined'
+    && window.isSecureContext
+    && typeof navigator !== 'undefined'
+    && Boolean(navigator.mediaDevices?.getUserMedia)
+  );
+}
+
 function captureFrameFromVideo(videoEl) {
   if (!videoEl || videoEl.readyState < 2 || !videoEl.videoWidth) return null;
   const canvas = document.createElement('canvas');
@@ -43,7 +52,7 @@ function captureFrameFromVideo(videoEl) {
   }
 }
 
-async function waitForFrame(videoEl, timeoutMs = 2500) {
+async function waitForFrame(videoEl, timeoutMs = 4000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
@@ -58,6 +67,8 @@ export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [cameraHint, setCameraHint] = useState('');
+  const [cameraReady, setCameraReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -69,10 +80,19 @@ export default function Login({ onLogin }) {
       streamRef.current = null;
     }
     if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraReady(false);
   }, []);
 
   const startCamera = useCallback(async () => {
-    stopCamera();
+    if (!canUseCamera()) {
+      setCameraHint(
+        window.isSecureContext
+          ? 'Camera is not available in this browser. Failed sign-ins will still be logged without a photo.'
+          : 'Camera snapshots need HTTPS. Open the site with https:// (not http://) so the browser can use the camera.',
+      );
+      return false;
+    }
+    if (streamRef.current?.active) return true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -83,20 +103,39 @@ export default function Login({ onLogin }) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play().catch(() => {});
       }
+      const ready = await waitForFrame(videoRef.current, 3000);
+      setCameraReady(ready);
+      if (ready) {
+        setCameraHint('');
+      } else {
+        setCameraHint('Camera started but no picture yet. Allow camera access if prompted.');
+      }
+      return ready;
     } catch {
-      /* camera denied/unavailable: report still continues without photo */
+      setCameraHint('Camera blocked. Allow camera access in the browser to capture photos on failed sign-in.');
+      return false;
     }
+  }, []);
+
+  const warmCamera = useCallback(() => {
+    if (!streamRef.current?.active) startCamera();
+  }, [startCamera]);
+
+  useEffect(() => {
+    if (!canUseCamera()) {
+      setCameraHint(
+        'Camera snapshots need HTTPS. Failed sign-ins are still recorded, but without a photo on this address.',
+      );
+    }
+    return () => stopCamera();
   }, [stopCamera]);
 
-  useEffect(() => () => stopCamera(), [stopCamera]);
-
   const reportFailedAttempt = async (attemptedUsername) => {
-    let snapshot;
     if (!streamRef.current?.active) {
       await startCamera();
     }
     await waitForFrame(videoRef.current);
-    snapshot = captureFrameFromVideo(videoRef.current);
+    const snapshot = captureFrameFromVideo(videoRef.current);
     stopCamera();
     try {
       await postFailedLoginReport({
@@ -114,28 +153,33 @@ export default function Login({ onLogin }) {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     const u = username;
     const p = password;
-    api('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ username: u, password: p }),
-    })
-      .then((data) => {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
-        onLogin(data.user);
-      })
-      .catch(async (err) => {
-        setError(err.message);
-        if (err.status === 401 || /credential/i.test(err.message || '')) {
-          await reportFailedAttempt(u);
-        }
-      })
-      .finally(() => setLoading(false));
+
+    // Start camera while the Sign in click still counts as a user gesture.
+    await startCamera();
+
+    try {
+      const data = await api('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username: u, password: p }),
+      });
+      stopCamera();
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      onLogin(data.user);
+    } catch (err) {
+      setError(err.message);
+      if (err.status === 401 || /credential/i.test(err.message || '')) {
+        await reportFailedAttempt(u);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -155,12 +199,20 @@ export default function Login({ onLogin }) {
           Admin sign in
           <span className="block mx-auto mt-2 h-1 w-16 rounded-full bg-school-red" />
         </h2>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {cameraHint ? (
+          <p className="text-school-blue-light text-xs mt-3 mb-0 p-2 rounded-lg bg-school-white/80 border border-school-blue-light/30">
+            {cameraHint}
+          </p>
+        ) : cameraReady ? (
+          <p className="text-green-700 text-xs mt-3 mb-0">Camera ready for security snapshots.</p>
+        ) : null}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4 mt-4">
           <label className="text-school-blue font-medium">
             Username
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
+              onFocus={warmCamera}
               autoComplete="username"
               className="block w-full mt-1 px-3 py-2 border border-school-blue-light rounded-lg focus:ring-2 focus:ring-school-blue focus:border-school-blue outline-none"
               required
@@ -172,6 +224,7 @@ export default function Login({ onLogin }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onFocus={warmCamera}
               autoComplete="current-password"
               className="block w-full mt-1 px-3 py-2 border border-school-blue-light rounded-lg focus:ring-2 focus:ring-school-blue focus:border-school-blue outline-none"
               required
