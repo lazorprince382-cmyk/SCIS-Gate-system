@@ -1,6 +1,7 @@
 import React from 'react';
 import { Outlet } from 'react-router-dom';
 import Navbar from '../../components/Navbar';
+import { appPath } from '../../appPath';
 
 export default function AdminLayout() {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -13,7 +14,7 @@ export default function AdminLayout() {
           <p className="text-school-blue font-medium">Access denied. Admin only.</p>
           <button
             type="button"
-            onClick={() => window.location.assign('/')}
+            onClick={() => window.location.assign(appPath('/'))}
             className="mt-4 py-2 px-4 rounded-lg bg-school-blue text-school-white font-medium hover:opacity-90 transition-opacity"
           >
             Go to Gate

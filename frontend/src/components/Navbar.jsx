@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { SCHOOL_NAME, SCHOOL_BADGE_URL } from '../theme';
+import { appPath } from '../appPath';
 
 const navLink =
   'text-school-blue hover:text-school-blue-light transition-colors font-semibold text-lg sm:text-xl';
@@ -13,7 +14,7 @@ const adminMenuLinkActive =
   'block w-full text-left px-4 py-3.5 sm:py-4 text-school-blue no-underline text-base sm:text-lg font-semibold bg-school-blue/[0.08] border-l-[4px] border-school-red rounded-r-lg ml-0 pl-3';
 
 function hardGo(path) {
-  window.location.assign(path);
+  window.location.assign(appPath(path));
 }
 
 export default function Navbar({ variant = 'default', username }) {
@@ -23,7 +24,10 @@ export default function Navbar({ variant = 'default', username }) {
   const adminMenuRef = useRef(null);
 
   const isActive = (path) => {
-    if (path === '/') return location.pathname === '/' || location.pathname === '/gate';
+    if (path === '/') {
+      const home = appPath('/').replace(/\/$/, '') || '/';
+      return location.pathname === home || location.pathname === `${home}/`;
+    }
     return location.pathname.startsWith(path);
   };
 
@@ -74,7 +78,7 @@ export default function Navbar({ variant = 'default', username }) {
       <nav className="bg-school-surface border-b-2 border-school-red shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center gap-4 min-h-[5.25rem] sm:min-h-[6.25rem] py-3 sm:py-4">
-            <a href="/admin" className="flex min-w-0 shrink items-center gap-3 no-underline text-inherit">
+            <a href={appPath('/admin')} className="flex min-w-0 shrink items-center gap-3 no-underline text-inherit">
               {logo}
             </a>
             <div className="relative flex-shrink-0" ref={adminMenuRef}>
@@ -160,7 +164,7 @@ export default function Navbar({ variant = 'default', username }) {
                         setAdminMenuOpen(false);
                         localStorage.removeItem('token');
                         localStorage.removeItem('user');
-                        window.location.replace('/login');
+                        window.location.replace(appPath('/login'));
                       }}
                       className="mt-1 w-full rounded-lg bg-school-red px-4 py-3 sm:py-3.5 text-left text-base sm:text-lg font-semibold text-school-white transition hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-school-red focus-visible:ring-offset-2"
                     >
@@ -180,7 +184,7 @@ export default function Navbar({ variant = 'default', username }) {
     <nav className="bg-school-surface border-b-2 border-school-red shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center min-h-[5.25rem] sm:min-h-[6.25rem] py-3 sm:py-4">
-          <a href="/" className="no-underline text-inherit">
+          <a href={appPath('/')} className="no-underline text-inherit">
             {logo}
           </a>
           <div className="flex items-center gap-8 sm:gap-10">

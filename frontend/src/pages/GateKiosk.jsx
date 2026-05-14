@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { BarcodeInput } from '../components/BarcodeInput';
 import Navbar from '../components/Navbar';
 import { api } from '../api';
+import { absoluteAppUrl, appPath } from '../appPath';
 
 const PURPOSE_PRESET_CUSTOM = '__custom__';
 
@@ -13,7 +14,7 @@ function PhoneScanSessionBox({ phoneSession }) {
       setQrDataUrl('');
       return undefined;
     }
-    const url = `${window.location.origin}/phone-scan/${phoneSession.id}`;
+    const url = absoluteAppUrl(`phone-scan/${phoneSession.id}`);
     let cancelled = false;
     QRCode.toDataURL(url, { width: 220, margin: 2, errorCorrectionLevel: 'M' })
       .then((dataUrl) => {
@@ -46,7 +47,7 @@ function PhoneScanSessionBox({ phoneSession }) {
       )}
       <p className="m-0 mt-3">
         Or open{' '}
-        <span className="font-mono font-semibold">{`${window.location.origin}/phone-scan`}</span>
+        <span className="font-mono font-semibold">{absoluteAppUrl('phone-scan')}</span>
         {' '}
         and enter code:
       </p>
@@ -55,7 +56,7 @@ function PhoneScanSessionBox({ phoneSession }) {
       </p>
       <p className="m-0 mt-3 text-school-blue-light text-xs">Direct link (fallback):</p>
       <p className="m-0 mt-1 font-mono break-all text-xs">
-        {`${window.location.origin}/phone-scan/${phoneSession.id}`}
+        {absoluteAppUrl(`phone-scan/${phoneSession.id}`)}
       </p>
       {showLocalhostHint ? (
         <p className="m-0 mt-2 text-school-blue-light text-xs">

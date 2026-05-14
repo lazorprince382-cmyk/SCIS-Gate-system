@@ -10,6 +10,7 @@ import SecurityAlerts from './pages/Admin/SecurityAlerts';
 import CardsManage from './pages/Admin/CardsManage';
 import AdminAccounts from './pages/Admin/AdminAccounts';
 import PhoneScanPage from './pages/PhoneScanPage';
+import { routerBasename } from './appPath';
 
 function RequireAuth({ children }) {
   const token = localStorage.getItem('token');
@@ -39,10 +40,9 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename()}>
       <Routes>
         <Route path="/" element={<GateKiosk />} />
-        <Route path="/gate" element={<GateKiosk />} />
         <Route path="/office" element={<OfficeDashboard />} />
         <Route path="/phone-scan" element={<PhoneScanPage />} />
         <Route path="/phone-scan/:sessionId" element={<PhoneScanPage />} />
