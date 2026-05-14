@@ -1,65 +1,66 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 
 /**
- * Visible placeholder for scanned barcode (read-only). A hidden off-screen input
- * captures scanner input (keyboard wedge). Only the scanner fills the value;
- * manual typing does not appear in the visible field.
+ * Keyboard-wedge barcode capture: a transparent input overlays the display so
+ * USB/Bluetooth scanners can type into a real focused field. Commits on Enter
+ * or after a short idle gap (scanners that omit Enter).
  */
-export function BarcodeInput({ onScan, placeholder = 'Scan barcode here (scanner only)...', disabled, autoFocus = true }) {
+export function BarcodeInput({
+  onScan,
+  placeholder = 'Scan barcode here (scanner only)...',
+  disabled,
+  autoFocus = true,
+}) {
   const inputRef = useRef(null);
-  const bufferRef = useRef('');
   const timeoutRef = useRef(null);
   const [displayValue, setDisplayValue] = useState('');
 
-  const flush = useCallback(() => {
-    const value = bufferRef.current.trim();
-    bufferRef.current = '';
-    if (value) {
+  const commitScan = useCallback(
+    (raw) => {
+      const value = String(raw ?? '')
+        .replace(/[\r\n\t]/g, '')
+        .trim();
+      if (!value) return;
       setDisplayValue(value);
       if (onScan) onScan(value);
-    }
-  }, [onScan]);
+      if (inputRef.current) inputRef.current.value = '';
+    },
+    [onScan],
+  );
+
+  const queueCommit = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => {
+      if (inputRef.current?.value.trim()) {
+        commitScan(inputRef.current.value);
+      }
+    }, 100);
+  }, [commitScan]);
 
   useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    const onKeyDown = (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (bufferRef.current.trim()) flush();
-        return;
-      }
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        bufferRef.current += e.key;
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        timeoutRef.current = setTimeout(flush, 150);
-      }
-    };
-    el.addEventListener('keydown', onKeyDown);
-    return () => {
-      el.removeEventListener('keydown', onKeyDown);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [flush]);
-
-  useEffect(() => {
-    if (autoFocus && inputRef.current && !disabled) inputRef.current.focus();
+    if (!autoFocus || disabled) return undefined;
+    const t = window.setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(t);
   }, [autoFocus, disabled]);
 
   useEffect(() => {
-    if (disabled) setDisplayValue('');
+    if (!disabled) return;
+    setDisplayValue('');
+    if (inputRef.current) inputRef.current.value = '';
   }, [disabled]);
 
+  useEffect(
+    () => () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    },
+    [],
+  );
+
   return (
-    <div className="mb-4">
-      {/* Visible read-only display: shows last scanned value or placeholder */}
+    <div className="mb-4 relative">
       <div
-        role="textbox"
-        aria-readonly="true"
-        aria-label="Scanned barcode display"
-        tabIndex={-1}
-        onClick={() => inputRef.current?.focus()}
-        className="w-full px-4 py-3 rounded-lg border-2 border-dashed border-school-blue-light/50 bg-school-surface text-school-blue font-mono min-h-[3rem] flex items-center"
+        aria-hidden
+        className="w-full px-4 py-3 rounded-lg border-2 border-dashed border-school-blue-light/50 bg-school-surface text-school-blue font-mono min-h-[3rem] flex items-center pointer-events-none select-none"
       >
         {displayValue ? (
           <span className="text-lg font-semibold">{displayValue}</span>
@@ -67,15 +68,28 @@ export function BarcodeInput({ onScan, placeholder = 'Scan barcode here (scanner
           <span className="text-school-blue-light">{placeholder}</span>
         )}
       </div>
-      {/* Hidden input off-screen: only this receives scanner input when focused */}
       <input
         ref={inputRef}
         type="text"
+        inputMode="numeric"
         disabled={disabled}
         autoComplete="off"
+        autoFocus={autoFocus}
         aria-label="Barcode scan input"
-        className="absolute opacity-0 pointer-events-none w-0 h-0"
-        style={{ position: 'absolute', left: '-9999px' }}
+        className="absolute inset-0 z-10 w-full min-h-[3rem] rounded-lg opacity-0 cursor-text bg-transparent border-0 outline-none focus:ring-2 focus:ring-school-blue"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            commitScan(e.currentTarget.value);
+          }
+        }}
+        onInput={queueCommit}
+        onBlur={(e) => {
+          if (e.currentTarget.value.trim()) {
+            commitScan(e.currentTarget.value);
+          }
+        }}
       />
     </div>
   );
