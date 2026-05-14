@@ -104,6 +104,14 @@ if ! "$PG_DUMP" --no-owner --no-privileges --dbname="$RENDER_DATABASE_URL" --fil
 fi
 echo "Saved: $BACKUP ($(wc -c < "$BACKUP") bytes)"
 
+# PG 18 dumps may SET options that older local Postgres does not recognize.
+RESTORE_FILE="${BACKUP%.sql}.restore.sql"
+sed -E \
+  -e '/^SET transaction_timeout/d' \
+  -e '/^SET idle_in_transaction_session_timeout/d' \
+  "$BACKUP" > "$RESTORE_FILE"
+echo "Prepared restore file: $RESTORE_FILE"
+
 echo "Stopping gate API..."
 pm2 stop scis-gate || true
 
@@ -121,7 +129,7 @@ echo "Replacing VPS database contents (as postgres superuser)..."
 psql_admin -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 psql_admin -c "ALTER SCHEMA public OWNER TO ${DB_USER};"
 psql_admin -c "GRANT ALL ON SCHEMA public TO ${DB_USER};"
-psql_admin --file="$BACKUP"
+psql_admin --file="$RESTORE_FILE"
 psql_admin -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER};"
 psql_admin -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};"
 psql_admin -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};"
