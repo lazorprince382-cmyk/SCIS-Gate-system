@@ -829,7 +829,17 @@ app.post('/api/staff/scan-in', async (req, res) => {
       WHERE sc.card_id = $1 AND s.active = TRUE
     `, [cardId]);
     if (link.rowCount === 0) {
-      return res.status(404).json({ error: 'Staff card not found. Use a teacher/staff card.' });
+      const visitor = await pool.query('SELECT card_name FROM cards WHERE card_id = $1', [cardId]);
+      if (visitor.rowCount > 0) {
+        return res.status(422).json({
+          error: 'This is a visitor card. Staff arrival only accepts staff/teacher cards.',
+          card_type: 'visitor',
+        });
+      }
+      return res.status(404).json({
+        error: 'Staff card not recognized. Register this person under Admin → Staff & teachers.',
+        card_type: 'unknown',
+      });
     }
     const staff = link.rows[0];
     const schoolDate = schoolDateFromInstant();
@@ -884,6 +894,7 @@ app.post('/api/staff/scan-in', async (req, res) => {
       late_minutes: evalResult.late_minutes,
       deduction_amount: evalResult.deduction_amount,
       attendance,
+      display_message: `Welcome to work, ${staff.full_name}!`,
     };
     if (evalResult.status === 'late') {
       broadcast({ type: 'staff_late', ...payload });
@@ -905,7 +916,17 @@ app.post('/api/staff/scan-out', async (req, res) => {
       WHERE sc.card_id = $1 AND s.active = TRUE
     `, [cardId]);
     if (link.rowCount === 0) {
-      return res.status(404).json({ error: 'Staff card not found' });
+      const visitor = await pool.query('SELECT card_name FROM cards WHERE card_id = $1', [cardId]);
+      if (visitor.rowCount > 0) {
+        return res.status(422).json({
+          error: 'This is a visitor card. Staff departure only accepts staff/teacher cards.',
+          card_type: 'visitor',
+        });
+      }
+      return res.status(404).json({
+        error: 'Staff card not recognized. Register this person under Admin → Staff & teachers.',
+        card_type: 'unknown',
+      });
     }
     const { staff_id: staffId, full_name: staffName, role } = link.rows[0];
     const schoolDate = schoolDateFromInstant();
@@ -929,6 +950,7 @@ app.post('/api/staff/scan-out', async (req, res) => {
       role,
       card_id: cardId,
       attendance: mapStaffAttendance(updated.rows[0]),
+      display_message: `Thank you for today, ${staffName}!`,
     });
   } catch {
     res.status(500).json({ error: 'Failed to record staff departure' });
