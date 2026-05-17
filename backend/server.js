@@ -967,6 +967,77 @@ app.post('/api/staff/:id/excuse', async (req, res) => {
   }
 });
 
+app.post('/api/staff/:id/mark-absent', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const staffId = Number(req.params.id);
+    const { school_date, note } = req.body || {};
+    if (!Number.isFinite(staffId)) return res.status(400).json({ error: 'Invalid staff id' });
+    const date = String(school_date || schoolDateFromInstant()).slice(0, 10);
+    const staffRes = await pool.query('SELECT * FROM staff WHERE id = $1', [staffId]);
+    if (staffRes.rowCount === 0) return res.status(404).json({ error: 'Staff not found' });
+    const staff = staffRes.rows[0];
+    const deduction = calcAbsentDeduction(staff);
+    const upserted = await pool.query(`
+      INSERT INTO staff_attendance (
+        staff_id, school_date, status, late_minutes, deduction_amount, excuse_type, excuse_note
+      )
+      VALUES ($1, $2, 'absent', 0, $3, NULL, $4)
+      ON CONFLICT (staff_id, school_date) DO UPDATE SET
+        status = 'absent',
+        late_minutes = 0,
+        deduction_amount = EXCLUDED.deduction_amount,
+        excuse_type = NULL,
+        excuse_note = EXCLUDED.excuse_note,
+        check_in_at = NULL,
+        check_out_at = NULL
+      RETURNING *
+    `, [staffId, date, deduction, String(note || 'No reason — one day pay deducted').trim()]);
+    res.json({
+      ...mapStaffAttendance(upserted.rows[0]),
+      staff_name: staff.full_name,
+      deduction_amount: deduction,
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to mark absent' });
+  }
+});
+
+app.get('/api/staff/attendance/history', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const today = schoolDateFromInstant();
+    const from = String(req.query.from || today).slice(0, 10);
+    const to = String(req.query.to || today).slice(0, 10);
+    const limit = Math.min(Number(req.query.limit) || 500, 1000);
+    const result = await pool.query(`
+      SELECT
+        a.*,
+        s.full_name,
+        s.role,
+        sc.card_id
+      FROM staff_attendance a
+      JOIN staff s ON s.id = a.staff_id
+      LEFT JOIN staff_cards sc ON sc.staff_id = s.id
+      WHERE a.school_date >= $1::date AND a.school_date <= $2::date
+      ORDER BY a.school_date DESC, s.full_name ASC
+      LIMIT $3
+    `, [from, to, limit]);
+    res.json({
+      from,
+      to,
+      records: result.rows.map((r) => ({
+        ...mapStaffAttendance(r),
+        full_name: r.full_name,
+        role: r.role,
+        card_id: r.card_id,
+      })),
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to load attendance history' });
+  }
+});
+
 app.get('/api/staff/attendance/today', async (req, res) => {
   if (!requireDevAdmin(req, res)) return;
   try {
@@ -986,7 +1057,7 @@ app.get('/api/staff/attendance/today', async (req, res) => {
     const dayRate = (s) => dailySalary(s);
     const list = allStaff.rows.map((s) => {
       const att = byStaff.get(s.id);
-      const absent = !att || (!att.check_in_at && att.status !== 'excused');
+      const absent = !att || (!att.check_in_at && att.status !== 'excused' && att.status !== 'absent');
       return {
         staff_id: s.id,
         full_name: s.full_name,
@@ -1038,6 +1109,13 @@ app.get('/api/staff/:id/summary', async (req, res) => {
       if (row?.status === 'excused') {
         excusedDays += 1;
         events.push({ date: dateStr, type: 'excused', excuse_type: row.excuse_type, note: row.excuse_note });
+        continue;
+      }
+      if (row?.status === 'absent') {
+        const ded = Number(row.deduction_amount) || calcAbsentDeduction(staff);
+        absentDays += 1;
+        absentDeduction += ded;
+        events.push({ date: dateStr, type: 'absent', deduction_amount: ded, note: row.excuse_note });
         continue;
       }
       if (row?.check_in_at) {
