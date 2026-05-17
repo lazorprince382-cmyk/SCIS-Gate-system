@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Navbar from '../components/Navbar';
 import { api } from '../api';
+import { consumeInactivityLockNotice } from '../hooks/useAdminIdleLock';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -67,6 +68,7 @@ export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [lockNotice, setLockNotice] = useState('');
   const [loading, setLoading] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -103,6 +105,11 @@ export default function Login({ onLogin }) {
   }, [startCamera]);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
+
+  useEffect(() => {
+    const notice = consumeInactivityLockNotice();
+    if (notice) setLockNotice(notice);
+  }, []);
 
   const reportFailedAttempt = async (attemptedUsername) => {
     if (!streamRef.current?.active) {
@@ -172,6 +179,11 @@ export default function Login({ onLogin }) {
           Admin sign in
           <span className="block mx-auto mt-2 h-1 w-16 rounded-full bg-school-red" />
         </h2>
+        {lockNotice && (
+          <p className="text-sm m-0 mb-3 p-3 rounded-lg bg-amber-50 border border-amber-300/60 text-amber-900">
+            {lockNotice}
+          </p>
+        )}
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <label className="text-school-blue font-medium">
             Username

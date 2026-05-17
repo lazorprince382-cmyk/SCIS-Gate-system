@@ -2,9 +2,12 @@ import React from 'react';
 import { Outlet } from 'react-router-dom';
 import Navbar from '../../components/Navbar';
 import { appPath } from '../../appPath';
+import { useAdminIdleLock } from '../../hooks/useAdminIdleLock';
 
 export default function AdminLayout() {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const isAdmin = !user.role || user.role === 'admin';
+  useAdminIdleLock(isAdmin);
 
   if (user.role && user.role !== 'admin') {
     return (
