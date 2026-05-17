@@ -9,6 +9,7 @@
     "backup:db": "node scripts/backup-db.mjs",
     "restore:db": "node scripts/restore-db.mjs",
     "admin:reset-password": "node scripts/reset-admin-password.mjs",
+    "admin:list": "node scripts/list-admins.mjs",
     "dev": "npm run migrate:up && node server.js"
   },
   "dependencies": {

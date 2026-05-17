@@ -25,8 +25,14 @@ const run = async () => {
     [ADMIN_USERNAME, hash],
   );
   if (result.rowCount === 0) {
-    console.error(`Admin user not found: ${ADMIN_USERNAME}`);
-    process.exit(1);
+    const inserted = await pool.query(
+      `INSERT INTO admins (username, password_hash, role, active)
+       VALUES ($1, $2, 'admin', TRUE)
+       RETURNING id, username`,
+      [ADMIN_USERNAME, hash],
+    );
+    console.log(`Created admin: ${inserted.rows[0].username}`);
+    return;
   }
   console.log(`Password reset for admin: ${result.rows[0].username}`);
 };
