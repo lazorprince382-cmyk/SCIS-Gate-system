@@ -8,7 +8,7 @@ import OfficesManage from './pages/Admin/OfficesManage';
 import VisitsReport from './pages/Admin/VisitsReport';
 import SecurityAlerts from './pages/Admin/SecurityAlerts';
 import CardsManage from './pages/Admin/CardsManage';
-import AdminAccounts from './pages/Admin/AdminAccounts';
+import StaffManage from './pages/Admin/StaffManage';
 import PhoneScanPage from './pages/PhoneScanPage';
 import { routerBasename } from './appPath';
 
@@ -53,6 +53,7 @@ export default function App() {
           <Route path="cards" element={<CardsManage />} />
           <Route path="visits" element={<VisitsReport />} />
           <Route path="security-alerts" element={<SecurityAlerts />} />
+          <Route path="staff" element={<StaffManage />} />
           <Route path="accounts" element={<AdminAccounts />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

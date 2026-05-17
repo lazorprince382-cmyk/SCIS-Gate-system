@@ -143,6 +143,14 @@ export default function Navbar({ variant = 'default', username }) {
                     </Link>
                     <Link
                       role="menuitem"
+                      to="/admin/staff"
+                      className={isActive('/admin/staff') ? adminMenuLinkActive : adminMenuLink}
+                      onClick={() => setAdminMenuOpen(false)}
+                    >
+                      Staff &amp; teachers
+                    </Link>
+                    <Link
+                      role="menuitem"
                       to="/admin/accounts"
                       className={isActive('/admin/accounts') ? adminMenuLinkActive : adminMenuLink}
                       onClick={() => setAdminMenuOpen(false)}

@@ -87,6 +87,7 @@ export default function GateKiosk() {
   const [phoneHint, setPhoneHint] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
   const [loading, setLoading] = useState(false);
+  const [staffSettings, setStaffSettings] = useState(null);
   const videoRef = useRef(null);
   const captureDoneRef = useRef(false);
   const visitorPhotoRef = useRef(null);
@@ -141,6 +142,7 @@ export default function GateKiosk() {
 
   useEffect(() => {
     api('/api/offices').then(setOffices).catch(() => setMessage({ type: 'error', text: 'Failed to load offices' }));
+    api('/api/staff/settings').then(setStaffSettings).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -254,6 +256,34 @@ export default function GateKiosk() {
       .catch((e) => setMessage({ type: 'error', text: e.message }));
   };
 
+  const handleStaffScanIn = (value) => {
+    setMessage({ type: '', text: '' });
+    api('/api/staff/scan-in', { method: 'POST', body: JSON.stringify({ card_id: value }) })
+      .then((data) => {
+        if (data.on_time) {
+          setMessage({
+            type: 'success',
+            text: `${data.staff_name} — on time. Welcome.`,
+          });
+        } else {
+          setMessage({
+            type: 'error',
+            text: `${data.staff_name} — LATE by ${data.late_minutes} min. Deduction: ${Number(data.deduction_amount).toLocaleString()}`,
+          });
+        }
+      })
+      .catch((e) => setMessage({ type: 'error', text: e.message }));
+  };
+
+  const handleStaffScanOut = (value) => {
+    setMessage({ type: '', text: '' });
+    api('/api/staff/scan-out', { method: 'POST', body: JSON.stringify({ card_id: value }) })
+      .then((data) => {
+        setMessage({ type: 'success', text: `${data.staff_name} — departure recorded.` });
+      })
+      .catch((e) => setMessage({ type: 'error', text: e.message }));
+  };
+
   const messageStyles = {
     error: 'bg-red-50 text-school-red border border-school-red/30',
     success: 'bg-green-50 text-green-800 border border-green-200',
@@ -296,6 +326,20 @@ export default function GateKiosk() {
                   className="w-full py-4 px-6 rounded-xl bg-red-700 text-school-white text-3xl font-semibold hover:opacity-90 transition-opacity shadow-sm"
                 >
                   Scan out
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('staffIn')}
+                  className="w-full py-4 px-6 rounded-xl bg-emerald-700 text-school-white text-2xl font-semibold hover:opacity-90 transition-opacity shadow-sm"
+                >
+                  Staff arrival
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('staffOut')}
+                  className="w-full py-4 px-6 rounded-xl bg-amber-700 text-school-white text-2xl font-semibold hover:opacity-90 transition-opacity shadow-sm"
+                >
+                  Staff departure
                 </button>
               </div>
             </div>
@@ -461,6 +505,52 @@ export default function GateKiosk() {
             </button>
             {phoneSession?.mode === 'scanOut' && <PhoneScanSessionBox phoneSession={phoneSession} />}
             {scanOutCard && <p className="text-school-blue-light text-sm mt-1">Processing card: {scanOutCard}</p>}
+            <button
+              type="button"
+              onClick={() => setMode('menu')}
+              className="mt-3 py-3 px-5 rounded-lg bg-school-red text-school-white font-semibold hover:opacity-90 transition-opacity"
+            >
+              Back
+            </button>
+          </div>
+        )}
+        {mode === 'staffIn' && (
+          <div className="flex flex-col gap-4 max-w-2xl mx-auto bg-school-white/80 backdrop-blur-sm p-5 rounded-xl border border-emerald-700/40 shadow-sm">
+            <h3 className="m-0 text-emerald-800 text-xl font-bold">Staff arrival</h3>
+            {staffSettings && (
+              <p className="m-0 text-school-blue-light text-sm">
+                Must scan by {staffSettings.report_time}. Late minutes reduce monthly pay (pro‑rata).
+              </p>
+            )}
+            <label className="block text-school-blue font-medium">
+              Staff card (scanner)
+              <BarcodeInput
+                onScan={handleStaffScanIn}
+                placeholder="Scan staff card for arrival..."
+                disabled={false}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setMode('menu')}
+              className="mt-3 py-3 px-5 rounded-lg bg-school-red text-school-white font-semibold hover:opacity-90 transition-opacity"
+            >
+              Back
+            </button>
+          </div>
+        )}
+        {mode === 'staffOut' && (
+          <div className="flex flex-col gap-4 max-w-2xl mx-auto bg-school-white/80 backdrop-blur-sm p-5 rounded-xl border border-amber-700/40 shadow-sm">
+            <h3 className="m-0 text-amber-900 text-xl font-bold">Staff departure</h3>
+            <p className="m-0 text-school-blue-light text-sm">Scan staff card when leaving school.</p>
+            <label className="block text-school-blue font-medium">
+              Staff card (scanner)
+              <BarcodeInput
+                onScan={handleStaffScanOut}
+                placeholder="Scan staff card for departure..."
+                disabled={false}
+              />
+            </label>
             <button
               type="button"
               onClick={() => setMode('menu')}

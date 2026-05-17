@@ -12,6 +12,16 @@ import jwt from 'jsonwebtoken';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
 import * as Sentry from '@sentry/node';
+import {
+  schoolDateFromInstant,
+  evaluateCheckIn,
+  calcAbsentDeduction,
+  dailySalary,
+  minuteRate,
+  contractMinutesPerMonth,
+  staffSettings,
+  formatReportTime,
+} from './lib/staffAttendance.js';
 
 const { Pool } = pg;
 
@@ -202,10 +212,43 @@ function requireDevAdmin(req, res) {
 async function generateUniqueSixDigitCardId(client) {
   for (let attempts = 0; attempts < 1000; attempts += 1) {
     const value = String(Math.floor(Math.random() * 1000000)).padStart(6, '0');
-    const check = await client.query('SELECT 1 FROM cards WHERE card_id = $1', [value]);
+    const check = await client.query(
+      'SELECT 1 FROM cards WHERE card_id = $1 UNION ALL SELECT 1 FROM staff_cards WHERE card_id = $1',
+      [value],
+    );
     if (check.rowCount === 0) return value;
   }
   throw new Error('Unable to generate unique card id');
+}
+
+function mapStaff(row) {
+  return {
+    id: row.id,
+    full_name: row.full_name,
+    role: row.role || '',
+    phone: row.phone || '',
+    monthly_salary: Number(row.monthly_salary),
+    work_days_per_month: Number(row.work_days_per_month),
+    hours_per_day: Number(row.hours_per_day),
+    active: row.active,
+    card_id: row.card_id || null,
+    created_at: row.created_at,
+  };
+}
+
+function mapStaffAttendance(row) {
+  return {
+    id: row.id,
+    staff_id: row.staff_id,
+    school_date: row.school_date,
+    check_in_at: row.check_in_at,
+    check_out_at: row.check_out_at,
+    status: row.status,
+    late_minutes: Number(row.late_minutes),
+    deduction_amount: Number(row.deduction_amount),
+    excuse_type: row.excuse_type,
+    excuse_note: row.excuse_note,
+  };
 }
 
 async function ensureDefaultAdmin() {
@@ -648,6 +691,394 @@ app.get('/api/visits', async (req, res) => {
     res.json(rows.rows.map((r) => mapVisit(r, { omitPhoto: slim })));
   } catch {
     res.status(500).json({ error: 'Failed to load visits' });
+  }
+});
+
+app.get('/api/staff/settings', (_req, res) => {
+  res.json(staffSettings());
+});
+
+app.get('/api/staff', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const result = await pool.query(`
+      SELECT s.*, sc.card_id
+      FROM staff s
+      LEFT JOIN staff_cards sc ON sc.staff_id = s.id
+      ORDER BY s.full_name ASC
+    `);
+    res.json(result.rows.map(mapStaff));
+  } catch {
+    res.status(500).json({ error: 'Failed to load staff' });
+  }
+});
+
+app.post('/api/staff', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  const client = await pool.connect();
+  try {
+    const {
+      full_name,
+      role,
+      phone,
+      monthly_salary,
+      work_days_per_month,
+      hours_per_day,
+    } = req.body || {};
+    const name = String(full_name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Staff name is required' });
+    const salary = Number(monthly_salary);
+    if (!Number.isFinite(salary) || salary < 0) {
+      return res.status(400).json({ error: 'Monthly salary must be a valid number' });
+    }
+    await client.query('BEGIN');
+    const inserted = await client.query(`
+      INSERT INTO staff (full_name, role, phone, monthly_salary, work_days_per_month, hours_per_day)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `, [
+      name,
+      String(role || '').trim(),
+      String(phone || '').trim(),
+      salary,
+      Math.max(1, Math.min(31, Math.floor(Number(work_days_per_month) || 22))),
+      Math.max(1, Math.min(24, Number(hours_per_day) || 8)),
+    ]);
+    const staffRow = inserted.rows[0];
+    const cardId = await generateUniqueSixDigitCardId(client);
+    await client.query(
+      'INSERT INTO staff_cards (staff_id, card_id) VALUES ($1, $2)',
+      [staffRow.id, cardId],
+    );
+    await client.query('COMMIT');
+    res.status(201).json(mapStaff({ ...staffRow, card_id: cardId }));
+  } catch {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'Failed to create staff member' });
+  } finally {
+    client.release();
+  }
+});
+
+app.patch('/api/staff/:id', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const staffId = Number(req.params.id);
+    if (!Number.isFinite(staffId)) return res.status(400).json({ error: 'Invalid staff id' });
+    const existing = await pool.query('SELECT * FROM staff WHERE id = $1', [staffId]);
+    if (existing.rowCount === 0) return res.status(404).json({ error: 'Staff not found' });
+    const row = existing.rows[0];
+    const {
+      full_name,
+      role,
+      phone,
+      monthly_salary,
+      work_days_per_month,
+      hours_per_day,
+      active,
+    } = req.body || {};
+    const updated = await pool.query(`
+      UPDATE staff SET
+        full_name = $2,
+        role = $3,
+        phone = $4,
+        monthly_salary = $5,
+        work_days_per_month = $6,
+        hours_per_day = $7,
+        active = $8
+      WHERE id = $1
+      RETURNING *
+    `, [
+      staffId,
+      typeof full_name === 'string' ? (full_name.trim() || row.full_name) : row.full_name,
+      typeof role === 'string' ? role.trim() : row.role,
+      typeof phone === 'string' ? phone.trim() : row.phone,
+      monthly_salary != null ? Number(monthly_salary) : row.monthly_salary,
+      work_days_per_month != null ? Math.max(1, Math.floor(Number(work_days_per_month))) : row.work_days_per_month,
+      hours_per_day != null ? Number(hours_per_day) : row.hours_per_day,
+      typeof active === 'boolean' ? active : row.active,
+    ]);
+    const card = await pool.query('SELECT card_id FROM staff_cards WHERE staff_id = $1', [staffId]);
+    res.json(mapStaff({ ...updated.rows[0], card_id: card.rows[0]?.card_id || null }));
+  } catch {
+    res.status(500).json({ error: 'Failed to update staff' });
+  }
+});
+
+app.delete('/api/staff/:id', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const staffId = Number(req.params.id);
+    if (!Number.isFinite(staffId)) return res.status(400).json({ error: 'Invalid staff id' });
+    const deleted = await pool.query('DELETE FROM staff WHERE id = $1 RETURNING id', [staffId]);
+    if (deleted.rowCount === 0) return res.status(404).json({ error: 'Staff not found' });
+    return res.status(204).send();
+  } catch {
+    res.status(500).json({ error: 'Failed to delete staff' });
+  }
+});
+
+app.post('/api/staff/scan-in', async (req, res) => {
+  try {
+    const cardId = String(req.body?.card_id || '').trim();
+    if (!cardId) return res.status(400).json({ error: 'Card id is required' });
+    const link = await pool.query(`
+      SELECT sc.staff_id, sc.card_id, s.*
+      FROM staff_cards sc
+      JOIN staff s ON s.id = sc.staff_id
+      WHERE sc.card_id = $1 AND s.active = TRUE
+    `, [cardId]);
+    if (link.rowCount === 0) {
+      return res.status(404).json({ error: 'Staff card not found. Use a teacher/staff card.' });
+    }
+    const staff = link.rows[0];
+    const schoolDate = schoolDateFromInstant();
+    const existing = await pool.query(
+      'SELECT * FROM staff_attendance WHERE staff_id = $1 AND school_date = $2',
+      [staff.id, schoolDate],
+    );
+    if (existing.rowCount > 0 && existing.rows[0].check_in_at) {
+      const prev = existing.rows[0];
+      return res.status(409).json({
+        error: 'Already checked in today',
+        check_in_at: prev.check_in_at,
+        staff_name: staff.full_name,
+      });
+    }
+    if (existing.rowCount > 0 && existing.rows[0].status === 'excused') {
+      return res.status(409).json({
+        error: 'This day is marked excused (sick/emergency). No check-in required.',
+        staff_name: staff.full_name,
+      });
+    }
+    const now = new Date();
+    const evalResult = evaluateCheckIn(staff, now);
+    const inserted = await pool.query(`
+      INSERT INTO staff_attendance (
+        staff_id, school_date, check_in_at, status, late_minutes, deduction_amount
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (staff_id, school_date) DO UPDATE SET
+        check_in_at = EXCLUDED.check_in_at,
+        status = EXCLUDED.status,
+        late_minutes = EXCLUDED.late_minutes,
+        deduction_amount = EXCLUDED.deduction_amount,
+        excuse_type = NULL,
+        excuse_note = NULL
+      RETURNING *
+    `, [
+      staff.id,
+      schoolDate,
+      now.toISOString(),
+      evalResult.status === 'late' ? 'late' : 'present',
+      evalResult.late_minutes,
+      evalResult.deduction_amount,
+    ]);
+    const attendance = mapStaffAttendance(inserted.rows[0]);
+    const payload = {
+      staff_name: staff.full_name,
+      role: staff.role,
+      card_id: cardId,
+      report_time: formatReportTime(),
+      on_time: evalResult.status === 'on_time',
+      late_minutes: evalResult.late_minutes,
+      deduction_amount: evalResult.deduction_amount,
+      attendance,
+    };
+    if (evalResult.status === 'late') {
+      broadcast({ type: 'staff_late', ...payload });
+    }
+    res.status(201).json(payload);
+  } catch {
+    res.status(500).json({ error: 'Failed to record staff arrival' });
+  }
+});
+
+app.post('/api/staff/scan-out', async (req, res) => {
+  try {
+    const cardId = String(req.body?.card_id || '').trim();
+    if (!cardId) return res.status(400).json({ error: 'Card id is required' });
+    const link = await pool.query(`
+      SELECT sc.staff_id, s.full_name, s.role
+      FROM staff_cards sc
+      JOIN staff s ON s.id = sc.staff_id
+      WHERE sc.card_id = $1 AND s.active = TRUE
+    `, [cardId]);
+    if (link.rowCount === 0) {
+      return res.status(404).json({ error: 'Staff card not found' });
+    }
+    const { staff_id: staffId, full_name: staffName, role } = link.rows[0];
+    const schoolDate = schoolDateFromInstant();
+    const row = await pool.query(
+      'SELECT * FROM staff_attendance WHERE staff_id = $1 AND school_date = $2',
+      [staffId, schoolDate],
+    );
+    if (row.rowCount === 0 || !row.rows[0].check_in_at) {
+      return res.status(404).json({ error: 'No arrival scan today. Scan in first.' });
+    }
+    if (row.rows[0].check_out_at) {
+      return res.status(409).json({ error: 'Already checked out today', check_out_at: row.rows[0].check_out_at });
+    }
+    const now = new Date();
+    const updated = await pool.query(`
+      UPDATE staff_attendance SET check_out_at = $3 WHERE staff_id = $1 AND school_date = $2
+      RETURNING *
+    `, [staffId, schoolDate, now.toISOString()]);
+    res.json({
+      staff_name: staffName,
+      role,
+      card_id: cardId,
+      attendance: mapStaffAttendance(updated.rows[0]),
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to record staff departure' });
+  }
+});
+
+app.post('/api/staff/:id/excuse', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const staffId = Number(req.params.id);
+    const { school_date, excuse_type, excuse_note } = req.body || {};
+    if (!Number.isFinite(staffId)) return res.status(400).json({ error: 'Invalid staff id' });
+    const type = String(excuse_type || '').toLowerCase();
+    if (!['sick', 'emergency'].includes(type)) {
+      return res.status(400).json({ error: 'excuse_type must be sick or emergency' });
+    }
+    const date = String(school_date || schoolDateFromInstant()).slice(0, 10);
+    const staff = await pool.query('SELECT * FROM staff WHERE id = $1', [staffId]);
+    if (staff.rowCount === 0) return res.status(404).json({ error: 'Staff not found' });
+    const upserted = await pool.query(`
+      INSERT INTO staff_attendance (
+        staff_id, school_date, status, late_minutes, deduction_amount, excuse_type, excuse_note
+      )
+      VALUES ($1, $2, 'excused', 0, 0, $3, $4)
+      ON CONFLICT (staff_id, school_date) DO UPDATE SET
+        status = 'excused',
+        late_minutes = 0,
+        deduction_amount = 0,
+        excuse_type = EXCLUDED.excuse_type,
+        excuse_note = EXCLUDED.excuse_note
+      RETURNING *
+    `, [staffId, date, type, String(excuse_note || '').trim()]);
+    res.json(mapStaffAttendance(upserted.rows[0]));
+  } catch {
+    res.status(500).json({ error: 'Failed to save excuse' });
+  }
+});
+
+app.get('/api/staff/attendance/today', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const schoolDate = schoolDateFromInstant();
+    const allStaff = await pool.query(`
+      SELECT s.*, sc.card_id
+      FROM staff s
+      LEFT JOIN staff_cards sc ON sc.staff_id = s.id
+      WHERE s.active = TRUE
+      ORDER BY s.full_name
+    `);
+    const attendance = await pool.query(
+      'SELECT * FROM staff_attendance WHERE school_date = $1',
+      [schoolDate],
+    );
+    const byStaff = new Map(attendance.rows.map((r) => [r.staff_id, mapStaffAttendance(r)]));
+    const dayRate = (s) => dailySalary(s);
+    const list = allStaff.rows.map((s) => {
+      const att = byStaff.get(s.id);
+      const absent = !att || (!att.check_in_at && att.status !== 'excused');
+      return {
+        staff_id: s.id,
+        full_name: s.full_name,
+        role: s.role,
+        card_id: s.card_id,
+        school_date: schoolDate,
+        attendance: att || null,
+        absent_today: absent,
+        would_deduct_absent: absent ? calcAbsentDeduction(s) : 0,
+      };
+    });
+    res.json({ school_date: schoolDate, report_time: formatReportTime(), staff: list });
+  } catch {
+    res.status(500).json({ error: 'Failed to load today attendance' });
+  }
+});
+
+app.get('/api/staff/:id/summary', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const staffId = Number(req.params.id);
+    const month = String(req.query.month || '').match(/^\d{4}-\d{2}$/)
+      ? String(req.query.month)
+      : schoolDateFromInstant().slice(0, 7);
+    if (!Number.isFinite(staffId)) return res.status(400).json({ error: 'Invalid staff id' });
+    const staffRes = await pool.query('SELECT * FROM staff WHERE id = $1', [staffId]);
+    if (staffRes.rowCount === 0) return res.status(404).json({ error: 'Staff not found' });
+    const staff = staffRes.rows[0];
+    const rows = await pool.query(
+      'SELECT * FROM staff_attendance WHERE staff_id = $1 AND school_date >= $2::date AND school_date < ($2::date + INTERVAL \'1 month\') ORDER BY school_date',
+      [staffId, `${month}-01`],
+    );
+    const byDate = new Map(rows.rows.map((r) => [String(r.school_date).slice(0, 10), r]));
+    let lateMinutes = 0;
+    let lateDeduction = 0;
+    let excusedDays = 0;
+    const events = [];
+    const [y, m] = month.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const today = schoolDateFromInstant();
+    let absentDays = 0;
+    let absentDeduction = 0;
+    for (let d = 1; d <= daysInMonth; d += 1) {
+      const dateStr = `${month}-${String(d).padStart(2, '0')}`;
+      if (dateStr > today) break;
+      const dow = new Date(`${dateStr}T12:00:00`).getDay();
+      if (dow === 0 || dow === 6) continue;
+      const row = byDate.get(dateStr);
+      if (row?.status === 'excused') {
+        excusedDays += 1;
+        events.push({ date: dateStr, type: 'excused', excuse_type: row.excuse_type, note: row.excuse_note });
+        continue;
+      }
+      if (row?.check_in_at) {
+        const late = Number(row.late_minutes) || 0;
+        const ded = Number(row.deduction_amount) || 0;
+        lateMinutes += late;
+        lateDeduction += ded;
+        events.push({
+          date: dateStr,
+          type: row.status === 'late' ? 'late' : 'on_time',
+          check_in_at: row.check_in_at,
+          check_out_at: row.check_out_at,
+          late_minutes: late,
+          deduction_amount: ded,
+        });
+        continue;
+      }
+      absentDays += 1;
+      const ded = calcAbsentDeduction(staff);
+      absentDeduction += ded;
+      events.push({ date: dateStr, type: 'absent', deduction_amount: ded });
+    }
+    res.json({
+      staff: mapStaff(staff),
+      month,
+      report_time: formatReportTime(),
+      minute_rate: minuteRate(staff),
+      daily_rate: dailySalary(staff),
+      contract_minutes_per_month: contractMinutesPerMonth(staff),
+      totals: {
+        late_minutes: lateMinutes,
+        late_deduction: Math.round(lateDeduction * 100) / 100,
+        absent_days: absentDays,
+        absent_deduction: Math.round(absentDeduction * 100) / 100,
+        excused_days: excusedDays,
+        total_deduction: Math.round((lateDeduction + absentDeduction) * 100) / 100,
+      },
+      events,
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to load staff summary' });
   }
 });
 
