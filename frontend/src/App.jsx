@@ -8,6 +8,7 @@ import OfficesManage from './pages/Admin/OfficesManage';
 import VisitsReport from './pages/Admin/VisitsReport';
 import SecurityAlerts from './pages/Admin/SecurityAlerts';
 import CardsManage from './pages/Admin/CardsManage';
+import AdminAccounts from './pages/Admin/AdminAccounts';
 import StaffManage from './pages/Admin/StaffManage';
 import PhoneScanPage from './pages/PhoneScanPage';
 import { routerBasename } from './appPath';
