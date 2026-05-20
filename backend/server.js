@@ -22,6 +22,7 @@ import {
   staffSettings,
   formatReportTime,
 } from './lib/staffAttendance.js';
+import { sendVisitorArrivalEmail } from './lib/mailer.js';
 
 const { Pool } = pg;
 
@@ -504,6 +505,25 @@ app.patch('/api/offices/:id', async (req, res) => {
   }
 });
 
+app.delete('/api/offices/:id', async (req, res) => {
+  if (!requireDevAdmin(req, res)) return;
+  try {
+    const officeId = Number(req.params.id);
+    if (!Number.isFinite(officeId)) return res.status(400).json({ error: 'Invalid office id' });
+    const inUse = await pool.query('SELECT 1 FROM visits WHERE office_id = $1 LIMIT 1', [officeId]);
+    if (inUse.rowCount > 0) {
+      return res.status(409).json({
+        error: 'Cannot delete an office that has visit records. Turn off notifications or edit the office instead.',
+      });
+    }
+    const deleted = await pool.query('DELETE FROM offices WHERE id = $1 RETURNING id', [officeId]);
+    if (deleted.rowCount === 0) return res.status(404).json({ error: 'Office not found' });
+    return res.status(204).send();
+  } catch {
+    res.status(500).json({ error: 'Failed to delete office' });
+  }
+});
+
 app.get('/api/cards', async (_req, res) => {
   if (!requireDevAdmin(_req, res)) return;
   try {
@@ -607,12 +627,22 @@ app.post('/api/visits', async (req, res) => {
       Number(barcode_card_id),
     ]);
     const withOffice = await pool.query(`
-      SELECT v.*, o.name AS office_name
+      SELECT v.*, o.name AS office_name, o.notification_email, o.email_notifications_enabled
       FROM visits v
       LEFT JOIN offices o ON o.id = v.office_id
       WHERE v.id = $1
     `, [inserted.rows[0].id]);
     const view = mapVisit(withOffice.rows[0]);
+    const officeRow = withOffice.rows[0];
+    if (officeRow.email_notifications_enabled && officeRow.notification_email) {
+      sendVisitorArrivalEmail(
+        { name: officeRow.office_name, notification_email: officeRow.notification_email, email_notifications_enabled: true },
+        view,
+        logger,
+      ).catch((err) => {
+        logger.warn({ err, office_id: officeRow.office_id }, 'Failed to send visitor notification email');
+      });
+    }
     broadcast({ type: 'visit_created', visit: mapVisit(withOffice.rows[0], { omitPhoto: true }) });
     res.status(201).json(view);
   } catch {

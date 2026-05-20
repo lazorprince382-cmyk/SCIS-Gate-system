@@ -1,28 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api';
 
+const emptyForm = () => ({
+  name: '',
+  notification_email: '',
+  email_notifications_enabled: false,
+});
+
 export default function OfficesManage() {
   const [offices, setOffices] = useState([]);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', notification_email: '', email_notifications_enabled: false });
+  const [form, setForm] = useState(emptyForm());
   const [message, setMessage] = useState('');
+  const [deletingId, setDeletingId] = useState(null);
 
-  const load = () => api('/api/offices').then(setOffices).catch(console.error);
+  const load = () => api('/api/offices').then(setOffices).catch((e) => setMessage(e.message));
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
+
+  const onEmailChange = (value) => {
+    setForm((f) => ({
+      ...f,
+      notification_email: value,
+      email_notifications_enabled: value.trim() ? true : f.email_notifications_enabled,
+    }));
+  };
 
   const handleCreate = (e) => {
     e.preventDefault();
     setMessage('');
+    const email = form.notification_email.trim();
     api('/api/offices', {
       method: 'POST',
       body: JSON.stringify({
         name: form.name.trim(),
-        notification_email: form.notification_email.trim() || null,
-        email_notifications_enabled: form.email_notifications_enabled,
+        notification_email: email,
+        email_notifications_enabled: email ? form.email_notifications_enabled : false,
       }),
     })
-      .then(() => { setForm({ name: '', notification_email: '', email_notifications_enabled: false }); load(); setMessage('Office created.'); })
+      .then(() => {
+        setForm(emptyForm());
+        load();
+        setMessage('Office created.');
+      })
       .catch((e) => setMessage(e.message));
   };
 
@@ -30,16 +52,39 @@ export default function OfficesManage() {
     e.preventDefault();
     if (!editing) return;
     setMessage('');
+    const email = form.notification_email.trim();
     api(`/api/offices/${editing.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
         name: form.name.trim(),
-        notification_email: form.notification_email.trim() || null,
-        email_notifications_enabled: form.email_notifications_enabled,
+        notification_email: email,
+        email_notifications_enabled: email ? form.email_notifications_enabled : false,
       }),
     })
-      .then(() => { setEditing(null); setForm({ name: '', notification_email: '', email_notifications_enabled: false }); load(); setMessage('Office updated.'); })
+      .then(() => {
+        setEditing(null);
+        setForm(emptyForm());
+        load();
+        setMessage('Office updated.');
+      })
       .catch((e) => setMessage(e.message));
+  };
+
+  const handleDelete = (o) => {
+    if (!window.confirm(`Delete office "${o.name}"? This cannot be undone.`)) return;
+    setDeletingId(o.id);
+    setMessage('');
+    api(`/api/offices/${o.id}`, { method: 'DELETE' })
+      .then(() => {
+        setOffices((prev) => prev.filter((x) => x.id !== o.id));
+        if (editing?.id === o.id) {
+          setEditing(null);
+          setForm(emptyForm());
+        }
+        setMessage(`Office "${o.name}" deleted.`);
+      })
+      .catch((e) => setMessage(e.message))
+      .finally(() => setDeletingId(null));
   };
 
   const startEdit = (o) => {
@@ -53,33 +98,45 @@ export default function OfficesManage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <h2 className="text-school-blue text-xl font-bold mb-4">Offices</h2>
+      <h2 className="text-school-blue text-xl font-bold m-0 mb-2">Offices</h2>
+      <p className="text-school-blue-light text-sm m-0 mb-4">
+        When a visitor registers for an office, that office receives an email with the visitor&apos;s details
+        (if notification email is set and <strong>Email notifications</strong> is on). Configure SMTP in the
+        server <code className="text-xs">.env</code> file.
+      </p>
       {message && (
-        <p className="p-3 bg-green-50 text-school-blue rounded-lg mb-4 border border-green-200">{message}</p>
+        <p className="p-3 bg-green-50 text-school-blue rounded-lg mb-4 border border-green-200 m-0">{message}</p>
       )}
       <form
         onSubmit={editing ? handleUpdate : handleCreate}
-        className="flex flex-wrap gap-3 items-end mb-6"
+        className="p-4 rounded-lg border border-school-blue-light/30 bg-school-surface flex flex-wrap gap-3 items-end mb-6"
       >
-        <input
-          value={form.name}
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          placeholder="Office name"
-          required
-          className="px-3 py-2 min-w-[160px] border border-school-blue-light rounded-lg focus:ring-2 focus:ring-school-blue focus:border-school-blue outline-none"
-        />
-        <input
-          value={form.notification_email}
-          onChange={(e) => setForm((f) => ({ ...f, notification_email: e.target.value }))}
-          placeholder="Notification email"
-          type="email"
-          className="px-3 py-2 min-w-[200px] border border-school-blue-light rounded-lg focus:ring-2 focus:ring-school-blue focus:border-school-blue outline-none"
-        />
-        <label className="flex items-center gap-2 text-school-blue font-medium">
+        <label className="text-school-blue font-medium text-sm">
+          Office name
+          <input
+            value={form.name}
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            placeholder="e.g. Principal Office"
+            required
+            className="block mt-1 px-3 py-2 min-w-[160px] border border-school-blue-light rounded-lg focus:ring-2 focus:ring-school-blue outline-none"
+          />
+        </label>
+        <label className="text-school-blue font-medium text-sm">
+          Notification email
+          <input
+            value={form.notification_email}
+            onChange={(e) => onEmailChange(e.target.value)}
+            placeholder="office@school.com"
+            type="email"
+            className="block mt-1 px-3 py-2 min-w-[220px] border border-school-blue-light rounded-lg focus:ring-2 focus:ring-school-blue outline-none"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-school-blue font-medium text-sm pb-2">
           <input
             type="checkbox"
             checked={form.email_notifications_enabled}
             onChange={(e) => setForm((f) => ({ ...f, email_notifications_enabled: e.target.checked }))}
+            disabled={!form.notification_email.trim()}
             className="rounded border-school-blue-light"
           />
           Email notifications
@@ -93,7 +150,10 @@ export default function OfficesManage() {
         {editing && (
           <button
             type="button"
-            onClick={() => { setEditing(null); setForm({ name: '', notification_email: '', email_notifications_enabled: false }); }}
+            onClick={() => {
+              setEditing(null);
+              setForm(emptyForm());
+            }}
             className="py-2 px-4 rounded-lg bg-school-red text-school-white font-medium hover:opacity-90 transition-opacity"
           >
             Cancel
@@ -104,23 +164,42 @@ export default function OfficesManage() {
         {offices.map((o) => (
           <li
             key={o.id}
-            className="p-4 bg-school-surface rounded-lg shadow-sm flex justify-between items-center border border-school-blue-light/30"
+            className="p-4 bg-school-surface rounded-lg shadow-sm flex flex-wrap justify-between items-center gap-3 border border-school-blue-light/30"
           >
-            <span className="text-school-blue font-medium">
-              {o.name}
-              {o.notification_email && <span className="text-school-blue-light text-sm ml-1">({o.notification_email})</span>}
-              {o.email_notifications_enabled && ' – email on'}
-            </span>
-            <button
-              type="button"
-              onClick={() => startEdit(o)}
-              className="py-1.5 px-3 rounded-md bg-school-blue text-school-white text-sm font-medium hover:opacity-90 transition-opacity"
-            >
-              Edit
-            </button>
+            <div className="min-w-0">
+              <span className="text-school-blue font-medium block">{o.name}</span>
+              {o.notification_email ? (
+                <span className="text-school-blue-light text-sm block mt-1">{o.notification_email}</span>
+              ) : (
+                <span className="text-school-blue-light text-sm block mt-1">No notification email</span>
+              )}
+              {o.email_notifications_enabled && o.notification_email ? (
+                <span className="text-green-700 text-xs font-semibold mt-1 inline-block">Email alerts on</span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => startEdit(o)}
+                className="py-1.5 px-3 rounded-md bg-school-blue text-school-white text-sm font-medium hover:opacity-90 transition-opacity"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(o)}
+                disabled={deletingId === o.id}
+                className="py-1.5 px-3 rounded-md bg-school-red text-school-white text-sm font-medium hover:opacity-90 disabled:opacity-60 transition-opacity"
+              >
+                {deletingId === o.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
           </li>
         ))}
       </ul>
+      {offices.length === 0 && (
+        <p className="text-school-blue-light text-center mt-4">No offices yet. Add one above.</p>
+      )}
     </div>
   );
 }
